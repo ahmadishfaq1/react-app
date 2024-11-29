@@ -1,0 +1,227 @@
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Field, ErrorMessage, useFormikContext } from "formik";
+import { IoCard } from "react-icons/io5";
+import { AiOutlineQuestionCircle } from "react-icons/ai";
+import { TbArrowBigDownFilled } from "react-icons/tb";
+import { MdCancel } from "react-icons/md";
+import AuthContext from "../../contexts/auth/AuthContext";
+import CustomErrorMessage from "../CustomErrorMessage";
+
+type CardBrand = "Visa" | "Mastercard" | "Discover" | "American Express" | "Other";
+
+const PaymentDetailsFields: React.FC = () => {
+  const { getCardBrand, existingUserData, setCardLimitReached } =
+    React.useContext(AuthContext);
+
+  const { values, errors, touched, setFieldValue } = useFormikContext<any>();
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [cardIcon, setCardIcon] = useState<JSX.Element | null>(null);
+  const [cardLimitAlert, setCardLimitAlert] = useState("");
+
+  const creditCardCount = useMemo(() => existingUserData?.credit_count || 0, [existingUserData]);
+  const debitCardCount = useMemo(() => existingUserData?.debit_count || 0, [existingUserData]);
+
+  const getCardBrandAndType = useCallback(
+    async (cardFirst6: string) => {
+      try {
+        const res = await getCardBrand({ card_first6: cardFirst6 });
+        const { brand, card_type } = res || {};
+
+        // Set the card brand icon
+        setCardIcon(getCardIcon(brand));
+
+        // Validate card limits
+        if (card_type === "credit" && creditCardCount >= 4) {
+          setCardLimitAlert("Credit card limit reached (4/4)");
+          setCardLimitReached(true);
+        } else if (card_type === "debit" && debitCardCount >= 4) {
+          setCardLimitAlert("Debit card limit reached (4/4)");
+          setCardLimitReached(true);
+        } else {
+          setCardLimitAlert("");
+          setCardLimitReached(false);
+        }
+      } catch (error: any) {
+        if (error.status === 401) {
+          console.error("Session has expired");
+        } else {
+          console.error("Error fetching card brand:", error.message);
+        }
+      }
+    },
+    [getCardBrand, creditCardCount, debitCardCount, setCardLimitReached]
+  );
+
+  const handleExpirationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value.replace(/[^\d/]/g, "");
+    if (value.length === 3 && value[2] !== "/") value = value.slice(0, 2) + "/" + value[2];
+    setFieldValue("expiration", value.slice(0, 5)); // Enforce MM/YY format
+  };
+
+  useEffect(() => {
+    const cardFirst6 = values.cardNumber?.replace(/\s/g, "").slice(0, 6);
+    if (cardFirst6?.length === 6) getCardBrandAndType(cardFirst6);
+  }, [values.cardNumber, getCardBrandAndType]);
+
+  const getCardIcon = (brand: CardBrand | undefined): JSX.Element | null => {
+    switch (brand) {
+      case "Visa":
+        return <img src="/visa-card.svg" alt="Visa" className="ml-2 mt-3" width={28} />;
+      case "Mastercard":
+        return <img src="/mastercard.svg" alt="Mastercard" className="ml-2 mt-3" width={28} />;
+      case "Discover":
+        return <img src="/discover-card.svg" alt="Discover" className="ml-2 mt-3" width={28} />;
+      case "American Express":
+        return <img src="/amex-card.svg" alt="Amex" className="ml-2 mt-3" width={28} />;
+      default:
+        return <IoCard className="absolute inset-y-2 inset-x-2 text-spanishGray" size={24} />;
+    }
+  };
+
+  const Tooltip = () => (
+    <div className="absolute z-10 w-[158px] -top-[75px] -right-4 bg-gray-700 text-white p-2 rounded-lg shadow-lg text-center">
+      <p className="text-[10px] font-semibold">
+        3-digit security code found on the back of your card.
+      </p>
+      <p className="text-[10px] font-semibold">
+        American Express has a 4-digit code on the front.
+      </p>
+      <TbArrowBigDownFilled className="absolute text-gray-700 right-6 -bottom-3" size={26} />
+    </div>
+  );
+
+  return (
+    <div className="grid grid-cols-6 gap-4">
+      {/* Card Number */}
+      <InputField
+        label="Card number"
+        name="cardNumber"
+        placeholder="Card number"
+        icon={cardIcon}
+        maxLength={19}
+        onInput={(e) => {
+          let value = e.target.value.replace(/\D/g, "");
+          e.target.value = value.match(/.{1,4}/g)?.join(" ") || "";
+        }}
+        error={errors.cardNumber}
+        touched={touched.cardNumber}
+      />
+
+      {cardLimitAlert && (
+        <AlertMessage icon={<MdCancel style={{ color: "#E32B25" }} />} message={cardLimitAlert} />
+      )}
+
+      {/* Name on Card */}
+      <InputField
+        label="Name on card"
+        name="associatedName"
+        placeholder="Name on card"
+        error={errors.associatedName}
+        touched={touched.associatedName}
+      />
+
+      {/* Expiration */}
+      <InputField
+        label="Expiration (MM/YY)"
+        name="expiration"
+        placeholder="MM/YY"
+        onChange={handleExpirationChange}
+        maxLength={5}
+        error={errors.expiration}
+        touched={touched.expiration}
+      />
+
+      {/* CVV */}
+      <div className="relative col-span-3">
+        <InputField
+          label="CVV"
+          name="cvv"
+          placeholder="CVV"
+          maxLength={4}
+          onInput={(e) => (e.target.value = e.target.value.replace(/[^0-9]/g, ""))}
+          error={errors.cvv}
+          touched={touched.cvv}
+          icon={
+            <AiOutlineQuestionCircle
+              className="absolute inset-y-3 right-3 text-mediumGray hover:text-blue cursor-pointer"
+              size={16}
+              onMouseEnter={() => setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+            />
+          }
+        />
+        {showTooltip && <Tooltip />}
+      </div>
+
+      {/* Future Confirmation */}
+      <CheckboxField
+        name="futureConfirmation"
+        label="Save payment information for future purchases"
+      />
+    </div>
+  );
+};
+
+// Reusable Input Field Component
+const InputField: React.FC<any> = ({
+  label,
+  name,
+  placeholder,
+  icon,
+  error,
+  touched,
+  ...props
+}) => (
+  <div className="relative col-span-full">
+    {!!props.value && (
+      <label
+        htmlFor={name}
+        className={`absolute text-[10px] top-[2px] left-2 bg-white px-1 ${
+          error && touched ? "text-red-500" : "text-gray-500"
+        }`}
+      >
+        {label}
+      </label>
+    )}
+    <div className="relative mt-2">
+      {icon}
+      <Field
+        id={name}
+        name={name}
+        placeholder={placeholder}
+        className={`w-full h-[43px] px-3 rounded-lg border ${
+          error && touched ? "border-red-500 focus:border-red-500" : "border-gray-300"
+        }`}
+        {...props}
+      />
+      <ErrorMessage name={name} component={CustomErrorMessage} />
+    </div>
+  </div>
+);
+
+// Reusable Checkbox Field Component
+const CheckboxField: React.FC<{ name: string; label: string }> = ({ name, label }) => (
+  <div className="col-span-full flex items-center gap-2">
+    <Field
+      id={name}
+      name={name}
+      type="checkbox"
+      className="custom-checkbox"
+      style={{ width: "16px", height: "16px" }}
+    />
+    <label htmlFor={name} className="text-sm text-gray-700">
+      {label}
+    </label>
+    <ErrorMessage name={name} component={CustomErrorMessage} />
+  </div>
+);
+
+// Reusable Alert Message Component
+const AlertMessage: React.FC<{ icon: JSX.Element; message: string }> = ({ icon, message }) => (
+  <div className="flex items-center gap-1 text-red-500">
+    {icon}
+    <p className="text-xs">{message}</p>
+  </div>
+);
+
+export default PaymentDetailsFields;
